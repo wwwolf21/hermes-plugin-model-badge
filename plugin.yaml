@@ -1,0 +1,35 @@
+name: model_badge
+version: 1.0.0
+manifest_version: 2
+api_version: 1
+description: "Telegram reply footer: provider logo (custom emoji), model name, thinking effort and a context-usage bar."
+author: Nikita Wolf
+license: MIT
+homepage: https://github.com/wwwolf21/hermes-plugin-model-badge
+kind: standalone
+tags: [gateway, telegram, model, context, badge]
+provides_hooks:
+  - pre_api_request
+  - post_api_request
+  - transform_llm_output
+config_schema:
+  platforms:
+    type: list
+    default: ["telegram"]
+    description: "Gateway platforms that get the footer (MarkdownV2 custom emoji only renders on Telegram)."
+  badges:
+    type: list
+    default: []
+    description: "Extra/override rows: [{match: '<regex on lowercase model id>', emoji_id: '<custom_emoji_id>', fallback: '🤖'}]. Checked before the built-ins; first match wins."
+  show_thinking:
+    type: bool
+    default: true
+    description: "Show the reasoning effort that went out on the wire (🧠H/M/L, 🧠A = model decides, 🚫 = off)."
+  show_context:
+    type: bool
+    default: true
+    description: "Show the context bar: prompt tokens of the last API call vs the model's context window."
+  bar_width:
+    type: int
+    default: 5
+    description: "Segments in the context bar."
