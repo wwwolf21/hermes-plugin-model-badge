@@ -47,6 +47,7 @@ plugins:
     model_badge:
       settings:
         platforms: [telegram]      # where to append the footer
+        preset: quote              # quote | line | mono | spoiler | minimal | logo | bar | full
         show_thinking: true
         show_context: true
         bar_width: 5
@@ -57,7 +58,38 @@ plugins:
 ```
 
 `emoji_id` is a `custom_emoji_id` from any pack the bot owner can use (`getStickerSet` in the Bot API
-returns them).
+returns them). Settings are also editable in the Desktop app, Plugins tab.
+
+### Looks
+
+| preset | renders as |
+|---|---|
+| `quote` (default) | `> 🎭 `Claude Fable 5.1 · 🧠H ▰▱▱▱▱ 4% · 48k/1M`` - blockquote, mono |
+| `line` | `🎭 Claude Fable 5.1 · 🧠H · ▰▱▱▱▱ 4% · 48k/1M` - plain text |
+| `mono` | same as quote without the blockquote bar |
+| `spoiler` | `\|\|🎭 `…`\|\|` - hidden until tapped |
+| `minimal` | `🎭 Claude Fable 5.1 · 🧠H · 4%` |
+| `logo` | `🎭` |
+| `bar` | `🎭 `▰▱▱▱▱ 4%`` |
+| `full` | quote + raw model id in parentheses |
+
+Fine-tuning on top of a preset (each key optional):
+
+```yaml
+        layout: spoiler            # line | quote | spoiler
+        mono: true
+        template: "{logo} {model}{sep}{thinking}{sep}{pct}"
+        separator: " | "
+        model_name: raw            # pretty | raw
+        thinking_style: word       # letter (🧠H) | word (🧠 high) | icon (🧠)
+        thinking_icon: "💭"
+        thinking_off: "💤"
+```
+
+Template fields: `{logo} {model} {raw_model} {thinking} {bar} {pct} {used} {ctx} {sep}`. Fields that are
+empty (no usage yet, `show_*: false`, unknown context window) disappear together with the separator
+next to them. With `mono` the logo is placed before the code span - Telegram does not render custom emoji
+inside code.
 
 ## How it works
 

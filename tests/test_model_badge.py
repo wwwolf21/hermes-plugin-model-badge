@@ -136,3 +136,58 @@ def test_session_map_is_bounded():
         ctx.hooks["post_api_request"](session_id=f"s{i}", model="m", usage={"prompt_tokens": 1})
     assert len(mb._last_usage) == mb._MAX_SESSIONS
     assert "s0" not in mb._last_usage
+
+
+_USAGE = {"model": "claude-fable-5-1", "provider": "anthropic", "base_url": "", "prompt_tokens": 48350, "thinking": "high"}
+_LOGO = "![🎭](tg://emoji?id=5302992173296300813)"
+
+
+def _footer(settings, usage=_USAGE, ctx_len=1_000_000, monkeypatch=None):
+    _fresh(settings)
+    mb._context_length = lambda *a: ctx_len
+    return mb.render_footer("claude-fable-5-1", usage)
+
+
+def test_presets_render_distinct_looks():
+    assert _footer({}) == f"> {_LOGO} `Claude Fable 5.1 · 🧠H ▰▱▱▱▱ 4% · 48k/1M`"
+    assert _footer({"preset": "line"}) == f"{_LOGO} Claude Fable 5.1 · 🧠H · ▰▱▱▱▱ 4% · 48k/1M"
+    assert _footer({"preset": "mono"}) == f"{_LOGO} `Claude Fable 5.1 · 🧠H ▰▱▱▱▱ 4% · 48k/1M`"
+    assert _footer({"preset": "spoiler"}) == f"||{_LOGO} `Claude Fable 5.1 · 🧠H ▰▱▱▱▱ 4% · 48k/1M`||"
+    assert _footer({"preset": "minimal"}) == f"{_LOGO} Claude Fable 5.1 · 🧠H · 4%"
+    assert _footer({"preset": "logo"}) == _LOGO
+    assert _footer({"preset": "bar"}) == f"{_LOGO} `▰▱▱▱▱ 4%`"
+    assert "(claude-fable-5-1)" in _footer({"preset": "full"})
+    assert _footer({"preset": "no-such"}) == _footer({})  # unknown preset falls back to default
+
+
+def test_overrides_on_top_of_preset():
+    assert _footer({"layout": "spoiler"}).startswith("||")
+    assert _footer({"preset": "line", "mono": True}) == f"{_LOGO} `Claude Fable 5.1 · 🧠H · ▰▱▱▱▱ 4% · 48k/1M`"
+    assert _footer({"template": "{pct} {logo}", "mono": False}) == f"> 4% {_LOGO}"
+    assert _footer({"separator": " | ", "preset": "line"}) == f"{_LOGO} Claude Fable 5.1 | 🧠H | ▰▱▱▱▱ 4% | 48k/1M"
+    assert "claude-fable-5-1 ·" in _footer({"model_name": "raw"})
+
+
+def test_thinking_styles_and_icons():
+    assert "🧠 high" in _footer({"thinking_style": "word"})
+    assert "· 🧠 ▰" in _footer({"thinking_style": "icon"})
+    assert "💭H" in _footer({"thinking_icon": "💭"})
+    assert "💤" in _footer({"thinking_off": "💤"}, usage=dict(_USAGE, thinking="off"))
+    assert "🧠A" in _footer({}, usage=dict(_USAGE, thinking=None))
+
+
+def test_empty_fields_collapse_with_separators():
+    assert _footer({"show_context": False}) == f"> {_LOGO} `Claude Fable 5.1 · 🧠H`"
+    assert _footer({"show_thinking": False}) == f"> {_LOGO} `Claude Fable 5.1 · ▰▱▱▱▱ 4% · 48k/1M`"
+    assert _footer({"preset": "line", "show_context": False, "show_thinking": False}) == f"{_LOGO} Claude Fable 5.1"
+    assert _footer({}, ctx_len=None) == f"> {_LOGO} `Claude Fable 5.1 · 🧠H · 48k`"  # unknown window: tokens only
+    assert _footer({}, usage=None) == f"> {_LOGO} `Claude Fable 5.1`"
+
+
+def test_no_double_footer_for_every_layout():
+    for preset in ("quote", "line", "spoiler", "logo"):
+        ctx = _fresh({"preset": preset})
+        hook = ctx.hooks["transform_llm_output"]
+        once = hook(response_text="x", model="claude-fable-5-1", platform="telegram", session_id="s")
+        assert once is not None, preset
+        assert hook(response_text=once, model="claude-fable-5-1", platform="telegram", session_id="s") is None, preset

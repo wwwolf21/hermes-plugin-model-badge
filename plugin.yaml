@@ -1,5 +1,5 @@
 name: model_badge
-version: 1.0.0
+version: 1.1.0
 manifest_version: 2
 api_version: 1
 description: "Telegram reply footer: provider logo (custom emoji), model name, thinking effort and a context-usage bar."
@@ -33,3 +33,39 @@ config_schema:
     type: int
     default: 5
     description: "Segments in the context bar."
+  preset:
+    type: str
+    default: quote
+    description: "Look: quote (blockquote + mono), line (plain text), mono, spoiler (tap to reveal), minimal (model · effort · %), logo (logo only), bar (logo + bar), full (adds raw model id)."
+  layout:
+    type: str
+    default: ""
+    description: "Override the preset wrapper: line | quote | spoiler."
+  mono:
+    type: bool
+    default: false
+    description: "Override: wrap the text part in a monospace span (the logo always stays outside)."
+  template:
+    type: str
+    default: ""
+    description: "Override the preset template. Fields: {logo} {model} {raw_model} {thinking} {bar} {pct} {used} {ctx} {sep}. Empty fields and their separators collapse."
+  separator:
+    type: str
+    default: " · "
+    description: "Text substituted for {sep}."
+  model_name:
+    type: str
+    default: pretty
+    description: "pretty (Claude Fable 5.1) or raw (claude-fable-5-1)."
+  thinking_style:
+    type: str
+    default: letter
+    description: "letter (🧠H), word (🧠 high) or icon (🧠 only, no level)."
+  thinking_icon:
+    type: str
+    default: "🧠"
+    description: "Icon when thinking is on."
+  thinking_off:
+    type: str
+    default: "🚫"
+    description: "Marker when thinking is off."

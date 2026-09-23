@@ -31,7 +31,7 @@ DEFAULT_BADGES = (
     (r"qwen", "5305430374690627622", "🟣"),
 )
 
-_FOOTER_RE = re.compile(r"\n\n> !\[[^\]]*\]\(tg://emoji\?id=\d+\)[^\n]*$")
+_FOOTER_RE = re.compile(r"\n\n(?:> |\|\|)?!\[[^\]]*\]\(tg://emoji\?id=\d+\)[^\n]*$")
 _ACRONYMS = {"gpt": "GPT", "o1": "o1", "o3": "o3", "o4": "o4"}
 _EFFORT_LETTER = {"minimal": "L", "low": "L", "medium": "M", "high": "H", "xhigh": "X", "max": "+", "ultra": "+", "auto": "A", "on": "A"}
 
@@ -172,32 +172,106 @@ def thinking_from_request(body: dict | None) -> str | None:
 
 
 def thinking_label(state: str | None) -> str:
-    if state is None:
-        return "🧠A"  # parameter absent: adaptive models decide on their own
+    """Effort as text. ``thinking_style``: ``letter`` (🧠H), ``word`` (🧠 high), ``icon`` (🧠 only when
+    on). Icons come from ``thinking_icon`` / ``thinking_off``."""
+    icon = str(_cfg("thinking_icon", "🧠"))
+    off = str(_cfg("thinking_off", "🚫"))
+    style = str(_cfg("thinking_style", "letter"))
     if state == "off":
-        return "🚫"
+        return off
+    if style == "icon":
+        return icon
+    if state is None:
+        return f"{icon}A" if style == "letter" else f"{icon} auto"
     if state.startswith("budget:"):
-        return f"🧠{state[7:]}"
-    return "🧠" + _EFFORT_LETTER.get(state, state[:1].upper())
+        return f"{icon}{state[7:]}" if style == "letter" else f"{icon} {state[7:]}"
+    if style == "word":
+        return f"{icon} {state}"
+    return icon + _EFFORT_LETTER.get(state, state[:1].upper())
+
+
+# Named looks. ``template`` fields: {logo} {model} {thinking} {bar} {pct} {used} {ctx} {sep}.
+# Empty fields collapse together with the separator next to them (see _fill_template).
+PRESETS = {
+    "quote":   {"layout": "quote",   "mono": True,  "template": "{logo} {model}{sep}{thinking} {bar} {pct}{sep}{used}/{ctx}"},
+    "line":    {"layout": "line",    "mono": False, "template": "{logo} {model}{sep}{thinking}{sep}{bar} {pct}{sep}{used}/{ctx}"},
+    "mono":    {"layout": "line",    "mono": True,  "template": "{logo} {model}{sep}{thinking} {bar} {pct}{sep}{used}/{ctx}"},
+    "spoiler": {"layout": "spoiler", "mono": True,  "template": "{logo} {model}{sep}{thinking} {bar} {pct}{sep}{used}/{ctx}"},
+    "minimal": {"layout": "line",    "mono": False, "template": "{logo} {model}{sep}{thinking}{sep}{pct}"},
+    "logo":    {"layout": "line",    "mono": False, "template": "{logo}"},
+    "bar":     {"layout": "line",    "mono": True,  "template": "{logo} {bar} {pct}"},
+    "full":    {"layout": "quote",   "mono": True,  "template": "{logo} {model} ({raw_model}){sep}{thinking}{sep}{bar} {pct}{sep}{used}/{ctx}"},
+}
+
+_LAYOUTS = {
+    "line":    lambda body: body,
+    "quote":   lambda body: f"> {body}",
+    "spoiler": lambda body: f"||{body}||",
+}
+
+
+def _look():
+    """Effective look = preset, then per-key overrides from settings (``layout``, ``mono``, ``template``)."""
+    preset = PRESETS.get(str(_cfg("preset", "quote")), PRESETS["quote"])
+    look = dict(preset)
+    for key in ("layout", "mono", "template"):
+        value = _cfg(key, None)
+        if value not in (None, ""):
+            look[key] = value
+    return look
+
+
+def _fill_template(template: str, fields: dict, sep: str) -> str:
+    """Substitute fields; drop empty ones and collapse the separators/spaces around them."""
+    out = template
+    for key, value in fields.items():
+        out = out.replace("{" + key + "}", value or "")
+    out = out.replace("{sep}", sep)
+    # collapse "a · · b", "a ·  " and stray "()" / "·" at the ends produced by empty fields
+    out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r"\s*/\s*(?=\s|$)", "", out) if not fields.get("ctx") else out
+    sep_re = re.escape(sep.strip()) if sep.strip() else None
+    if sep_re:
+        out = re.sub(rf"(?:\s*{sep_re}\s*){{2,}}", sep, out)
+        out = re.sub(rf"^\s*{sep_re}\s*|\s*{sep_re}\s*$", "", out)
+    out = re.sub(r"[ \t]{2,}", " ", out).strip()
+    return out
 
 
 def render_footer(model: str, usage: dict | None) -> str | None:
-    """``> ![🎭](tg://emoji?id=N) `Claude Fable 5.1 · 🧠H ▰▱▱▱▱ 4% · 48k/1M``` or None (no badge)."""
+    """Footer line per the configured look, or None when the model has no badge."""
     badge = badge_for(model)
     if badge is None:
         return None
     emoji_id, fallback = badge
-    info = pretty_model(model)
+    look = _look()
+    sep = str(_cfg("separator", " · "))
+    fields = {
+        "logo": "\x00LOGO\x00",  # placeholder: the logo must stay outside the mono span
+        "model": pretty_model(model) if str(_cfg("model_name", "pretty")) == "pretty" else (model or ""),
+        "raw_model": model or "",
+        "thinking": "", "bar": "", "pct": "", "used": "", "ctx": "",
+    }
     if _cfg("show_thinking", True) and usage and "thinking" in usage:
-        info += f" · {thinking_label(usage['thinking'])}"
+        fields["thinking"] = thinking_label(usage["thinking"])
     if _cfg("show_context", True) and usage and usage.get("prompt_tokens"):
         used = int(usage["prompt_tokens"])
+        fields["used"] = fmt_tokens(used)
         ctx = _context_length(usage.get("model") or model, usage.get("base_url", ""), usage.get("provider", ""))
         if ctx:
-            info += f" {bar(used, ctx, _cfg('bar_width', 5))} {100 * used // ctx}% · {fmt_tokens(used)}/{fmt_tokens(ctx)}"
-        else:
-            info += f" · {fmt_tokens(used)}"
-    return f"> ![{fallback}](tg://emoji?id={emoji_id}) `{info}`"
+            fields["bar"] = bar(used, ctx, _cfg("bar_width", 5))
+            fields["pct"] = f"{100 * used // ctx}%"
+            fields["ctx"] = fmt_tokens(ctx)
+    body = _fill_template(str(look["template"]), fields, sep)
+    logo = f"![{fallback}](tg://emoji?id={emoji_id})"
+    if look.get("mono"):
+        # Mono wraps everything except the logo (custom emoji do not render inside code spans).
+        head, _, tail = body.partition("\x00LOGO\x00")
+        parts = [head.strip(), logo if _ else "", f"`{tail.strip()}`" if tail.strip() else ""]
+        body = " ".join(p for p in parts if p)
+    else:
+        body = body.replace("\x00LOGO\x00", logo)
+    return _LAYOUTS.get(str(look.get("layout")), _LAYOUTS["line"])(body.strip())
 
 
 def render_badge(response_text: str, model: str, platform: str, usage: dict | None = None):
