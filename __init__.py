@@ -12,15 +12,29 @@ loop) renders the footer from the LAST call - i.e. the live context size and the
 answered (fallback chains can swap models mid-turn).
 
 Custom emoji render only when the bot owner has Telegram Premium; otherwise Telegram shows the
-fallback unicode emoji. The adapter must pass ``![..](tg://emoji?id=N)`` through unescaped
-(hermes-agent PR: "pass MarkdownV2 custom emoji links through format_message").
+fallback unicode emoji.
+
+Two ways to get ``![..](tg://emoji?id=N)`` through the adapter's MarkdownV2 escaping:
+- a core that passes it through (hermes-agent PR "pass MarkdownV2 custom emoji links through
+  format_message") - detected at load time, nothing else to do;
+- a stock core - ``TelegramAdapter.format_message`` is wrapped once (see ``install_shim``) to
+  un-escape exactly that construct after the original formatter ran. Signature-guarded and idempotent;
+  if the adapter changes shape the shim steps aside and the footer degrades to a plain link.
 """
 
+import functools
+import inspect
 import logging
 import re
+import sys
 import threading
 
 logger = logging.getLogger(__name__)
+
+_ADAPTER_MODULES = ("hermes_plugins.platforms__telegram.adapter", "plugins.platforms.telegram.adapter")
+_SHIM_MARK = "_model_badge_shim"
+_PROBE = "![🎭](tg://emoji?id=1)"
+_ESCAPED_EMOJI_RE = re.compile(r"\\!(\[[^\]]*\]\(tg://emoji\?id=\d+\))")
 
 # Built-in rows: (regex on lowercase model id, custom_emoji_id, fallback emoji). First match wins.
 # Emoji ids come from the public pack https://t.me/addemoji/llm_badges_by_wolfpw_bot; any pack works
@@ -332,3 +346,68 @@ def register(ctx):
     ctx.register_hook("pre_api_request", _pre_api_request)
     ctx.register_hook("post_api_request", _post_api_request)
     ctx.register_hook("transform_llm_output", _transform_llm_output)
+    if ensure_custom_emoji_passthrough() is None:
+        # The adapter module may not be imported yet at plugin-load time; retry on session start.
+        ctx.register_hook("on_session_start", lambda **_: ensure_custom_emoji_passthrough())
+
+
+# --------------------------------------------------------------------------- adapter compatibility
+
+def _adapter_class():
+    for mod_name in _ADAPTER_MODULES:
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            try:
+                mod = __import__(mod_name, fromlist=["TelegramAdapter"])
+            except Exception:
+                continue
+        cls = getattr(mod, "TelegramAdapter", None)
+        if cls is not None:
+            return cls
+    return None
+
+
+def core_passes_custom_emoji(cls) -> bool:
+    """True when the core's formatter already leaves ``![..](tg://emoji?id=N)`` unescaped."""
+    try:
+        return "\\" + _PROBE not in cls.format_message(None, _PROBE)
+    except Exception:
+        return False
+
+
+def _shim_format(original):
+    @functools.wraps(original)
+    def format_message(self, content, *args, **kwargs):
+        out = original(self, content, *args, **kwargs)
+        return _ESCAPED_EMOJI_RE.sub(r"!\1", out) if isinstance(out, str) else out
+    format_message.__dict__[_SHIM_MARK] = True
+    return format_message
+
+
+def install_shim(cls=None) -> bool:
+    """Wrap ``TelegramAdapter.format_message`` once. True when installed (or already present)."""
+    cls = cls or _adapter_class()
+    if cls is None:
+        return False
+    original = getattr(cls, "format_message", None)
+    if original is None:
+        return False
+    if getattr(original, _SHIM_MARK, False):
+        return True
+    params = list(inspect.signature(original).parameters)
+    if params[:2] != ["self", "content"]:
+        logger.warning("TelegramAdapter.format_message signature changed (%s); custom emoji badge disabled", params)
+        return False
+    cls.format_message = _shim_format(original)
+    logger.info("model_badge: custom emoji passthrough shim installed on TelegramAdapter.format_message")
+    return True
+
+
+def ensure_custom_emoji_passthrough():
+    """None = adapter not importable yet; True = core handles it or shim installed; False = gave up."""
+    cls = _adapter_class()
+    if cls is None:
+        return None
+    if core_passes_custom_emoji(cls):
+        return True
+    return install_shim(cls)

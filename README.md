@@ -23,9 +23,14 @@ Only `platform == "telegram"` is touched; subagents, cron, CLI and other platfor
 
 ## Requirements
 
-- Hermes Agent with the custom-emoji passthrough in the Telegram adapter
-  (upstream PR *"feat(telegram): pass MarkdownV2 custom emoji links through format_message"*).
-  Without it the `!` is escaped and the logo degrades to a plain link.
+- Any current Hermes Agent. Two modes, chosen automatically at load:
+  - **core passthrough** - a core that leaves `![..](tg://emoji?id=N)` unescaped in
+    `TelegramAdapter.format_message` (upstream PR
+    [NousResearch/hermes-agent#119945](https://github.com/NousResearch/hermes-agent/pull/119945)); the
+    plugin detects it and does nothing else;
+  - **shim** - on a stock core the plugin wraps `TelegramAdapter.format_message` once and un-escapes exactly
+    that construct after the original formatter ran. Signature-guarded (refuses if the method shape
+    changes) and idempotent; on refusal the footer still appears, with the logo as a plain link.
 - The bot owner needs Telegram Premium for custom emoji to render; otherwise the fallback unicode emoji
   in the brackets is shown.
 
@@ -33,11 +38,11 @@ Only `platform == "telegram"` is touched; subagents, cron, CLI and other platfor
 
 ```bash
 hermes plugins install wwwolf21/hermes-plugin-model-badge --enable
-hermes gateway restart
 ```
 
-Or clone into `~/.hermes/plugins/model_badge/` and `hermes plugins enable model_badge`.
-Lives outside the core tree, so `hermes update` never touches it.
+Lives outside the core tree, so `hermes update` never touches it. To move to a newer plugin commit:
+`hermes plugins install https://github.com/wwwolf21/hermes-plugin-model-badge.git --force --ref <sha> --enable`
+(the install is pinned to an exact commit; hooks hot-reload into a running gateway).
 
 ## Settings (`~/.hermes/config.yaml`)
 

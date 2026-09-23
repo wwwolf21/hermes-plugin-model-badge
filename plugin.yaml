@@ -1,5 +1,5 @@
 name: model_badge
-version: 1.1.0
+version: 1.2.0
 manifest_version: 2
 api_version: 1
 description: "Telegram reply footer: provider logo (custom emoji), model name, thinking effort and a context-usage bar."
@@ -12,6 +12,7 @@ provides_hooks:
   - pre_api_request
   - post_api_request
   - transform_llm_output
+  - on_session_start
 config_schema:
   platforms:
     type: list

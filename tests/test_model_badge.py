@@ -191,3 +191,50 @@ def test_no_double_footer_for_every_layout():
         once = hook(response_text="x", model="claude-fable-5-1", platform="telegram", session_id="s")
         assert once is not None, preset
         assert hook(response_text=once, model="claude-fable-5-1", platform="telegram", session_id="s") is None, preset
+
+
+# --------------------------------------------------------------------------- adapter shim (stock core)
+
+class _StockAdapter:
+    """Shaped like a stock TelegramAdapter: escapes the leading '!' of every link."""
+
+    def format_message(self, content):
+        return content.replace("![", "\\![").replace(".", "\\.")
+
+
+class _PatchedAdapter:
+    def format_message(self, content):
+        return content.replace(".", "\\.")
+
+
+class _OddAdapter:
+    def format_message(self, text, mode):  # changed signature
+        return text
+
+
+def test_shim_unescapes_only_custom_emoji_links():
+    cls = type("A", (_StockAdapter,), {})
+    assert not mb.core_passes_custom_emoji(cls)
+    assert mb.install_shim(cls) is True
+    out = cls.format_message(cls(), "v1.2 ![🎭](tg://emoji?id=5) ![alt](https://x.y/a.png)")
+    assert out == "v1\\.2 ![🎭](tg://emoji?id=5) \\![alt](https://x\\.y/a\\.png)"
+    assert mb.core_passes_custom_emoji(cls)
+
+
+def test_shim_is_idempotent_and_skipped_on_patched_core():
+    cls = type("A", (_StockAdapter,), {})
+    assert mb.install_shim(cls) is True
+    wrapped = cls.format_message
+    assert mb.install_shim(cls) is True
+    assert cls.format_message is wrapped  # not wrapped twice
+    patched = type("B", (_PatchedAdapter,), {})
+    before = patched.format_message
+    assert mb.core_passes_custom_emoji(patched)
+    assert patched.format_message is before
+
+
+def test_shim_refuses_changed_signature():
+    cls = type("C", (_OddAdapter,), {})
+    before = cls.format_message
+    assert mb.install_shim(cls) is False
+    assert cls.format_message is before
